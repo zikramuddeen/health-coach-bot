@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-PERSISTENT_DIR = '/opt/render/project/src/persistent'
-MODEL_PATH = f'{PERSISTENT_DIR}/health_coach_model'
-TOKENIZER_PATH = f'{PERSISTENT_DIR}/health_coach_tokenizer'
-USER_DATA_PATH = f'{PERSISTENT_DIR}/health_coach_user_data.csv'
+TEMP_DIR = '/tmp'
+MODEL_PATH = f'{TEMP_DIR}/health_coach_model'
+TOKENIZER_PATH = f'{TEMP_DIR}/health_coach_tokenizer'
+USER_DATA_PATH = f'{TEMP_DIR}/health_coach_user_data.csv'
 
 # Initialize model and tokenizer
 try:
@@ -26,12 +26,12 @@ try:
         logger.info("Downloading DistilBERT...")
         model = AutoModelForSequenceClassification.from_pretrained('distilbert-base-uncased')
         tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
-        os.makedirs(PERSISTENT_DIR, exist_ok=True)
+        os.makedirs(TEMP_DIR, exist_ok=True)
         model.save_pretrained(MODEL_PATH)
         tokenizer.save_pretrained(TOKENIZER_PATH)
-        logger.info("Model and tokenizer saved to persistent disk")
+        logger.info("Model and tokenizer saved to temporary storage")
     else:
-        logger.info("Loading model from persistent disk...")
+        logger.info("Loading model from temporary storage...")
         model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
         tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
         logger.info("Model and tokenizer loaded")
@@ -47,11 +47,11 @@ try:
             'user_id', 'name', 'weight', 'height', 'goal', 'reminders', 'progress', 'feedback',
             'conversation', 'water_log', 'sleep_log', 'calorie_log', 'workout_log', 'stress_log'
         ])
-        os.makedirs(PERSISTENT_DIR, exist_ok=True)
+        os.makedirs(TEMP_DIR, exist_ok=True)
         df.to_csv(USER_DATA_PATH, index=False)
-        logger.info("User data CSV created on persistent disk")
+        logger.info("User data CSV created in temporary storage")
     else:
-        logger.info("User data loaded from persistent disk")
+        logger.info("User data loaded from temporary storage")
 except Exception as e:
     logger.error(f"Error initializing user data: {e}")
     raise
@@ -79,6 +79,7 @@ async def generate_response(user_id, message, user_data):
         """
         inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=512)
         outputs = model(**inputs)
+        torch.cuda.empty_cache()  # Free GPU memory
         response = "Consult a doctor if symptoms persist."
         if 'headache' in message.lower():
             response = "Headaches may be due to dehydration, stress, or lack of sleep. Drink water, rest, and consult a doctor if persistent."
@@ -444,9 +445,9 @@ async def export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_row.empty:
             await update.message.reply_text("Set your profile first with /profile")
             return
-        user_data = user_row.to_csv(f"{PERSISTENT_DIR}/user_data_{user_id}.csv", index=False)
-        await update.message.reply_document(document=open(f"{PERSISTENT_DIR}/user_data_{user_id}.csv", 'rb'), filename=f"health_data_{user_id}.csv")
-        os.remove(f"{PERSISTENT_DIR}/user_data_{user_id}.csv")
+        user_data = user_row.to_csv(f"{TEMP_DIR}/user_data_{user_id}.csv", index=False)
+        await update.message.reply_document(document=open(f"{TEMP_DIR}/user_data_{user_id}.csv", 'rb'), filename=f"health_data_{user_id}.csv")
+        os.remove(f"{TEMP_DIR}/user_data_{user_id}.csv")
         logger.info("User data exported")
     except Exception as e:
         logger.error(f"Error exporting data: {e}")
