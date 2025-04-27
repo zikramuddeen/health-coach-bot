@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import torch
 import gc
+import shutil
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -23,14 +24,18 @@ USER_DATA_PATH = f'{TEMP_DIR}/health_coach_user_data.csv'
 
 # Initialize model and tokenizer
 try:
+    # Clear corrupted model directory if it exists
+    if os.path.exists(MODEL_PATH) and not os.path.exists(os.path.join(MODEL_PATH, 'pytorch_model.bin')):
+        logger.info("Clearing corrupted model directory...")
+        shutil.rmtree(MODEL_PATH)
     if not os.path.exists(MODEL_PATH):
-        logger.info("Downloading smaller DistilBERT model...")
+        logger.info("Downloading smaller DistilRoBERTa model...")
         with torch.no_grad():
             model = AutoModelForSequenceClassification.from_pretrained(
-                'distilbert-base-uncased-finetuned-sst-2-english',
+                'distilroberta-base',
                 device_map='cpu'
             )
-            tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased-finetuned-sst-2-english')
+            tokenizer = AutoTokenizer.from_pretrained('distilroberta-base')
         os.makedirs(TEMP_DIR, exist_ok=True)
         model.save_pretrained(MODEL_PATH)
         tokenizer.save_pretrained(TOKENIZER_PATH)
@@ -64,7 +69,7 @@ except Exception as e:
     logger.error(f"Error initializing user data: {e}")
     raise
 
-# Generate response with DistilBERT
+# Generate response with DistilRoBERTa
 async def generate_response(user_id, message, user_data):
     logger.info(f"Generating response for user {user_id}: {message}")
     try:
@@ -86,7 +91,7 @@ async def generate_response(user_id, message, user_data):
         - Update conversation history.
         """
         with torch.no_grad():
-            inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=256)
+            inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=128)
             outputs = model(**inputs)
         torch.cuda.empty_cache()
         gc.collect()
@@ -197,7 +202,7 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         progress = user_row['progress'].iloc[0]
         await update.message.reply_text(f"Your progress: {progress if progress else 'No progress recorded. Update with /update_progress!'}")
-        logger.info("Progress check")
+        logger.info("Progress checked")
     except Exception as e:
         logger.error(f"Error checking progress: {e}")
         await update.message.reply_text("Error checking progress. Please try again.")
