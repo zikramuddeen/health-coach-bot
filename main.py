@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import torch
+import gc
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -23,18 +24,25 @@ USER_DATA_PATH = f'{TEMP_DIR}/health_coach_user_data.csv'
 # Initialize model and tokenizer
 try:
     if not os.path.exists(MODEL_PATH):
-        logger.info("Downloading DistilBERT...")
-        model = AutoModelForSequenceClassification.from_pretrained('distilbert-base-uncased')
-        tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
+        logger.info("Downloading smaller DistilBERT model...")
+        with torch.no_grad():
+            model = AutoModelForSequenceClassification.from_pretrained(
+                'distilbert-base-uncased-finetuned-sst-2-english',
+                device_map='cpu'
+            )
+            tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased-finetuned-sst-2-english')
         os.makedirs(TEMP_DIR, exist_ok=True)
         model.save_pretrained(MODEL_PATH)
         tokenizer.save_pretrained(TOKENIZER_PATH)
         logger.info("Model and tokenizer saved to temporary storage")
     else:
         logger.info("Loading model from temporary storage...")
-        model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
-        tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
+        with torch.no_grad():
+            model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH, device_map='cpu')
+            tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
         logger.info("Model and tokenizer loaded")
+    gc.collect()
+    torch.cuda.empty_cache()
 except Exception as e:
     logger.error(f"Error initializing model/tokenizer: {e}")
     raise
@@ -77,9 +85,11 @@ async def generate_response(user_id, message, user_data):
         - Keep responses concise, under 200 words.
         - Update conversation history.
         """
-        inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=512)
-        outputs = model(**inputs)
-        torch.cuda.empty_cache()  # Free GPU memory
+        with torch.no_grad():
+            inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=512)
+            outputs = model(**inputs)
+        torch.cuda.empty_cache()
+        gc.collect()
         response = "Consult a doctor if symptoms persist."
         if 'headache' in message.lower():
             response = "Headaches may be due to dehydration, stress, or lack of sleep. Drink water, rest, and consult a doctor if persistent."
