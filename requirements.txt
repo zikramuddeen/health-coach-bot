@@ -1,0 +1,5 @@
+transformers==4.51.3
+python-telegram-bot==20.7
+torch==2.6.0
+pandas==2.2.2
+numpy==2.0.2
