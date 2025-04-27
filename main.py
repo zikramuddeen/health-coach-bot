@@ -590,4 +590,139 @@ async def weekly_trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = (f"Weekly Trends (Last 7 Days):\n"
                    f"- Water Intake: {water_trend}\n"
                    f"- Sleep: {sleep_trend}\n"
-                   f"- Calorie
+                   f"- Calories: {calorie_trend}\n"
+                   f"- Workouts: {workout_trend}\n"
+                   f"- Stress: {stress_trend}\n"
+                   "Use /health_summary for detailed metrics!")
+        await update.message.reply_text(response)
+        logger.info("Weekly trend sent")
+    except Exception as e:
+        logger.error(f"Error generating weekly trend: {e}")
+        await update.message.reply_text("Error generating weekly trend. Please try again.")
+
+async def goal_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Processing /goal_progress command")
+    user_id = update.effective_user.id
+    try:
+        df = pd.read_csv(USER_DATA_PATH)
+        user_row = df[df['user_id'] == user_id]
+        if user_row.empty:
+            await update.message.reply_text("Set your profile first with /profile")
+            return
+
+        goal = user_row['goal'].iloc[0]
+        progress = user_row['progress'].iloc[0]
+        weight = user_row['weight'].iloc[0]
+        workout_logs = user_row['workout_log'].iloc[0].split(';') if pd.notna(user_row['workout_log'].iloc[0]) else []
+
+        # Analyze progress
+        start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        workout_count = len([log for log in workout_logs if log and log.split(':')[0] >= start_date])
+
+        response = f"Goal Progress (Goal: {goal})\n"
+        if goal.lower() in ['weight_loss', 'lose_weight']:
+            if progress and 'kg' in progress.lower():
+                try:
+                    weight_change = float(progress.split('kg')[0].strip())
+                    response += f"- Weight Change: {weight_change}kg\n"
+                    response += "- Tip: Aim for 0.5-1kg loss per week for healthy progress.\n"
+                except ValueError:
+                    response += "- No valid weight change logged. Update with /update_progress.\n"
+            else:
+                response += "- No weight change logged. Update with /update_progress.\n"
+        elif goal.lower() in ['fitness', 'get_fit']:
+            response += f"- Workouts (Last 7 Days): {workout_count}\n"
+            response += "- Tip: Aim for 3-5 workouts per week for fitness goals.\n"
+        else:
+            response += "- Custom goal detected. Update progress with /update_progress.\n"
+
+        response += "Keep logging data for better insights!"
+        await update.message.reply_text(response)
+        logger.info("Goal progress sent")
+    except Exception as e:
+        logger.error(f"Error generating goal progress: {e}")
+        await update.message.reply_text("Error generating goal progress. Please try again.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    message = update.message.text
+    logger.info(f"Received message from {user_id}: {message}")
+    try:
+        df = pd.read_csv(USER_DATA_PATH)
+        user_row = df[df['user_id'] == user_id]
+        if not user_row.empty and 'Health Quiz' in user_row['conversation'].iloc[0]:
+            if message.isdigit():
+                hours = int(message)
+                response = f"You aim for {hours} hours of sleep. " + ("Great!" if 7 <= hours <= 9 else "Aim for 7-9 hours for optimal health.")
+                df.loc[df['user_id'] == user_id, 'conversation'] += f"\nUser: {message}\nBot: {response}"
+                df.to_csv(USER_DATA_PATH, index=False)
+                await update.message.reply_text(response)
+                logger.info("Quiz response processed")
+                return
+        response = await generate_response(user_id, message, None)
+        await update.message.reply_text(response)
+        logger.info("Response sent")
+    except Exception as e:
+        logger.error(f"Error handling message: {e}")
+        await update.message.reply_text("Error processing message. Please try again.")
+
+async def main():
+    logger.info("Initializing Telegram bot...")
+    try:
+        if not TOKEN:
+            logger.error("TELEGRAM_TOKEN not set")
+            raise ValueError("TELEGRAM_TOKEN environment variable is not set")
+        app = Application.builder().token(TOKEN).build()
+        logger.info("Bot application built")
+
+        # Add handlers
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("profile", profile))
+        app.add_handler(CommandHandler("remind", remind))
+        app.add_handler(CommandHandler("progress", progress))
+        app.add_handler(CommandHandler("update_progress", update_progress))
+        app.add_handler(CommandHandler("bmi", bmi))
+        app.add_handler(CommandHandler("health_tip", health_tip))
+        app.add_handler(CommandHandler("feedback", feedback))
+        app.add_handler(CommandHandler("wearable_data", wearable_data))
+        app.add_handler(CommandHandler("log_water", log_water))
+        app.add_handler(CommandHandler("log_sleep", log_sleep))
+        app.add_handler(CommandHandler("log_calories", log_calories))
+        app.add_handler(CommandHandler("log_workout", log_workout))
+        app.add_handler(CommandHandler("log_stress", log_stress))
+        app.add_handler(CommandHandler("motivate", motivate))
+        app.add_handler(CommandHandler("health_quiz", health_quiz))
+        app.add_handler(CommandHandler("export_data", export_data))
+        app.add_handler(CommandHandler("report_issue", report_issue))
+        app.add_handler(CommandHandler("health_summary", health_summary))
+        app.add_handler(CommandHandler("weekly_trend", weekly_trend))
+        app.add_handler(CommandHandler("goal_progress", goal_progress))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        logger.info("Bot handlers initialized")
+
+        logger.info("Starting polling with interval=1.0, timeout=20")
+        while True:
+            try:
+                await app.run_polling(poll_interval=1.0, timeout=20)
+                logger.info("Bot is polling")
+            except Exception as e:
+                logger.error(f"Polling error: {e}")
+                await asyncio.sleep(5)  # Retry after 5 seconds
+            finally:
+                logger.info("Shutting down bot...")
+                if 'app' in globals() and app.running:
+                    await app.stop()
+                    await app.shutdown()
+                    logger.info("Bot shut down")
+                else:
+                    logger.info("Bot was not running, no shutdown needed")
+    except Exception as e:
+        logger.error(f"Bot initialization error: {e}")
+        raise
+
+if __name__ == "__main__":
+    logger.info("Starting bot execution...")
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.error(f"Bot error: {e}")
